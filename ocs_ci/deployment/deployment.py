@@ -17,12 +17,14 @@ from ocs_ci.ocs.cluster import validate_cluster_on_pvc, validate_pdb_creation
 from ocs_ci.ocs.exceptions import (
     CommandFailed, UnavailableResourceException, UnsupportedPlatformError
 )
+from ocs_ci.ocs.machine import get_labeled_nodes
 from ocs_ci.ocs.monitoring import (
     create_configmap_cluster_monitoring_pod,
     validate_pvc_created_and_bound_on_monitoring_pods,
-    validate_pvc_are_mounted_on_monitoring_pods
-)
+    validate_pvc_are_mounted_on_monitoring_pods,
+    remove_monitoring_stack_from_ocs)
 from ocs_ci.ocs.node import get_typed_nodes, get_typed_worker_nodes
+from ocs_ci.ocs.registry import remove_ocp_registry_from_ocs
 from ocs_ci.ocs.resources.catalog_source import CatalogSource
 from ocs_ci.ocs.resources.csv import CSV
 from ocs_ci.ocs.resources.install_plan import wait_for_install_plan_and_approve
@@ -32,8 +34,10 @@ from ocs_ci.ocs.resources.packagemanifest import (
 )
 from ocs_ci.ocs.resources.pod import (
     get_all_pods,
-    validate_pods_are_respinned_and_running_state
-)
+    validate_pods_are_respinned_and_running_state,
+    delete_pods)
+from ocs_ci.ocs.resources.pvc import get_all_pvcs
+from ocs_ci.ocs.resources.storage_cluster import get_all_storageclass, get_local_volume_cr, check_local_volume
 from ocs_ci.ocs.utils import (
     setup_ceph_toolbox, collect_ocs_logs
 )
@@ -56,6 +60,7 @@ class Deployment(object):
     """
     Base for all deployment platforms
     """
+
     def __init__(self):
         self.platform = config.ENV_DATA['platform']
         self.ocp_deployment_type = config.ENV_DATA['deployment_type']
@@ -186,7 +191,7 @@ class Deployment(object):
         Currently it has to be moved here to enable CA certificate to be
         properly propagated for the stage deployment as mentioned in BZ.
         """
-        if(config.ENV_DATA['platform'] not in constants.CLOUD_PLATFORMS):
+        if (config.ENV_DATA['platform'] not in constants.CLOUD_PLATFORMS):
             run_cmd(
                 f'oc patch {constants.IMAGE_REGISTRY_CONFIG} --type merge -p '
                 f'\'{{"spec":{{"storage": {{"emptyDir":{{}}}}}}}}\''
@@ -204,7 +209,7 @@ class Deployment(object):
         nodes = ocp.OCP(kind='node').get().get('items', [])
         worker_nodes = [
             node for node in nodes if "node-role.kubernetes.io/worker"
-            in node['metadata']['labels']
+                                      in node['metadata']['labels']
         ]
         if not worker_nodes:
             raise UnavailableResourceException("No worker node found!")
@@ -645,6 +650,98 @@ class Deployment(object):
                 f"-p {patch} "
                 f"--request-timeout=120s"
             )
+
+    def uninstall_ocs(self):
+        """
+        The function Uninstalls the OCS operator from a openshift
+        cluster and removes all its settings and dependencies
+
+        """
+        ocp_obj = ocp.OCP()
+        provisioners = constants.OCS_PROVISIONERS
+
+        # List the storage classes
+        sc_list = get_all_storageclass()
+        for storage_class in sc_list:
+            if storage_class.get('provisioner') in provisioners:
+                sc_list.remove(storage_class)
+
+        # Query for PVCs and OBCs that are using the storage class provisioners listed in the previous step.
+        pvc_list = get_all_pvcs(namespace='all-namespaces')
+        pvcs_to_delete = []
+        for pvc in pvc_list:
+            for storage_class in sc_list:
+                if pvc.backed_sc == storage_class:
+                    pvcs_to_delete.append(pvc)
+                    break
+
+        # Removing monitoring stack from OpenShift Container Storage
+        remove_monitoring_stack_from_ocs(sc_list)
+
+        # Removing OpenShift Container Platform registry from OpenShift Container Storage
+        remove_ocp_registry_from_ocs(self.platform)
+
+        # Removing the cluster logging operator from OpenShift Container Storage
+        clusterlogging_obj = ocp.OCP(
+            kind=constants.CLUSTER_LOGGING, namespace=constants.OPENSHIFT_LOGGING_NAMESPACE
+        )
+        clusterlogging_obj.delete(resource_name='instance')
+
+        # Determine the pod that is consuming the PVC.
+        for pvc in pvcs_to_delete:
+            delete_pods(pvc.get_attached_pods())
+
+        # Delete the PVCs.
+        for pvc in pvc_list:
+            pvc.delete()
+            ocp_obj.wait_for_delete(pvc.name)
+
+        # Delete the StorageCluster object.
+        storage_cluster = ocp.OCP(kind=constants.STORAGECLUSTER, resource_name=constants.DEFAULT_CLUSTERNAME)
+        storage_cluster.delete()
+
+        # Delete the namespaces
+        ocp_obj.delete_project('openshift-storage')
+        ocp_obj.wait_for_delete("openshift-storage")
+
+        # Debugging nodes
+        nodes_list = get_labeled_nodes(constants.OPERATOR_NODE_LABEL)
+        for node in nodes_list:
+            ocp_obj.exec_oc_debug_cmd(node=node, cmd_list=["rm -rf /var/lib/rook"])
+
+        """next 2 steps are from 4.4"""
+        if check_local_volume():
+            # Delete the local volume resource
+            local_volume_obj = get_local_volume_cr()
+            local_volume_obj.delete()
+
+            # Clean up the artifacts from the storage nodes for that resource.
+            for node in nodes_list:
+                ocp_obj.exec_oc_debug_cmd(node=node, cmd_list=["rm -rf /mnt/local-storage/localblock"])
+
+        # Delete the storage classes with an openshift-storage provisioner list
+        for storage_class in sc_list:
+            storage_class.delete()
+
+        # Remove the taint from the storage nodes.NOT SUPPORTED YET
+        """ ocp_obj.exec_oc_cmd("adm taint nodes --all node.ocs.openshift.io/storage-") """
+
+        # Unlabel the storage nodes.
+        nodes_list.append(get_labeled_nodes('topology.rook.io/rack'))
+        for node in nodes_list:
+            ocp_obj.add_label(resource_name=node, label='cluster.ocs.openshift.io/openshift-storage-')
+            ocp_obj.add_label(resource_name=node, label='topology.rook.io/rack-')
+
+        # Remove CustomResourceDefinitions.
+        ocp_obj.exec_oc_cmd(
+            "delete crd backingstores.noobaa.io bucketclasses.noobaa.io"
+            " cephblockpools.ceph.rook.io cephclusters.ceph.rook.io "
+            "cephfilesystems.ceph.rook.io cephnfses.ceph.rook.io "
+            "cephobjectstores.ceph.rook.io cephobjectstoreusers.ceph.rook.io "
+            "noobaas.noobaa.io ocsinitializations.ocs.openshift.io  "
+            "storageclusterinitializations.ocs.openshift.io "
+            "storageclusters.ocs.openshift.io  --wait=true --timeout=5m"
+        )
 
 
 def create_catalog_source(image=None, ignore_upgrade=False):

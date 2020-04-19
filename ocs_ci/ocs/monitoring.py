@@ -4,7 +4,7 @@ import json
 
 from ocs_ci.ocs.ocp import OCP
 from ocs_ci.utility import templating
-from ocs_ci.ocs import constants, defaults
+from ocs_ci.ocs import constants, defaults, ocp
 from ocs_ci.ocs.resources.pvc import get_all_pvcs, PVC
 from ocs_ci.ocs.resources.pod import get_pod_obj
 from tests import helpers
@@ -214,3 +214,17 @@ def prometheus_health_check(name=constants.MONITORING, kind=constants.CLUSTER_OP
 
     logging.error(f"Prometheus cluster is degraded {health_conditions}")
     return False
+
+
+def remove_monitoring_stack_from_ocs(ocs_storage_classes):
+    monitoring_obj = ocp.OCP(
+        namespace=constants.MONITORING_NAMESPACE, kind='configmap',
+        resource_name='cluster-monitoring-config'
+    )
+    monitoring_list = monitoring_obj.get('data').get('config.yaml')
+    for item in monitoring_list:
+        if item.get().get('volumeClaimTemplate').get('spec').get('storageClassName') in ocs_storage_classes:
+            monitoring_list.remove(item)
+
+    monitoring_obj.patch(resource_name='cluster-monitoring-config',
+                         params=f'{{"data": {{"config.yaml": {monitoring_list}}}}}')
