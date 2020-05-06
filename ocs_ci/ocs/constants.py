@@ -803,3 +803,6 @@ AUTH_CONFIG_DOCS = (
     'https://ocs-ci.readthedocs.io/en/latest/docs/getting_started.html'
     '#authentication-config'
 )
+# files
+REMOTE_FILE_URL = "http://download.ceph.com/tarballs/ceph_15.1.0.orig.tar.gz"
+FILE_PATH = '/tmp/ceph.tar.gz'
