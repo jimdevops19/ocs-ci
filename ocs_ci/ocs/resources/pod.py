@@ -1279,3 +1279,43 @@ def wait_for_dc_app_pods_to_reach_running_state(
                 helpers.wait_for_resource_state(
                     dpod, constants.STATUS_RUNNING, timeout=timeout
                 )
+
+
+def get_pod_restarts_count(namespace=defaults.ROOK_CLUSTER_NAMESPACE):
+    """
+    Gets the dictionary of pod and its restart count for all the pods in a given namespace
+
+    Returns:
+        dict: dictionary of pod name and its corresponding restart count
+
+    """
+    list_of_pods = get_all_pods(namespace)
+    restart_dict = {}
+    ocp_pod_obj = OCP(kind=constants.POD, namespace=namespace)
+    for p in list_of_pods:
+        # we don't want to compare osd-prepare and canary pods as they get created freshly when an osd need to be added.
+        if "rook-ceph-osd-prepare" not in p.name and "rook-ceph-drain-canary" not in p.name:
+            restart_dict[p.name] = int(ocp_pod_obj.get_resource(p.name, 'RESTARTS'))
+    logging.info(f"get_pod_restarts_count: restarts dict = {restart_dict}")
+    return restart_dict
+
+
+def check_pods_in_running_state(namespace=defaults.ROOK_CLUSTER_NAMESPACE):
+    """
+    checks whether all the pods in a given namespace are in Running state or not
+
+    Returns:
+        Boolean: True, if all pods in Running state. False, otherwise
+
+    """
+    ret_val = True
+    list_of_pods = get_all_pods(namespace)
+    ocp_pod_obj = OCP(kind=constants.POD, namespace=namespace)
+    for p in list_of_pods:
+        # we don't want to compare osd-prepare and canary pods as they get created freshly when an osd need to be added.
+        if "rook-ceph-osd-prepare" not in p.name and "rook-ceph-drain-canary" not in p.name:
+            status = ocp_pod_obj.get_resource(p.name, 'STATUS')
+            if status not in "Running":
+                logging.error(f"The pod {p.name} is in {status} state. Expected = Running")
+                ret_val = False
+    return ret_val
