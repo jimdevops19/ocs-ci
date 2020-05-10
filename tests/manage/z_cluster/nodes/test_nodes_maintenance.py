@@ -157,7 +157,7 @@ class TestNodesMaintenance(ManageTest):
         drain_nodes([typed_node_name])
 
         # Restarting the node
-        nodes.restart_nodes(nodes=typed_nodes, wait=True)
+        nodes.restart_nodes(nodes=typed_nodes)
 
         wait_for_nodes_status(
             node_names=[typed_node_name], status=constants.NODE_READY_SCHEDULING_DISABLED
