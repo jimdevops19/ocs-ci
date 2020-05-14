@@ -15,7 +15,7 @@ from ocs_ci.ocs.node import (
     add_new_node_and_label_it
 )
 from ocs_ci.framework.testlib import (
-    tier1, tier2, tier3, tier4, tier4b,
+    tier1, tier2, tier3, tier4, tier4b, bugzilla,
     ManageTest, aws_platform_required, ignore_leftovers
 )
 
@@ -128,6 +128,7 @@ class TestNodesMaintenance(ManageTest):
 
     @tier4
     @tier4b
+    @bugzilla('1835908')
     @pytest.mark.parametrize(
         argnames=["node_type"],
         argvalues=[
