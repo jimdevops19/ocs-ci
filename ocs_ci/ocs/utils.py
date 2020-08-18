@@ -17,9 +17,10 @@ from libcloud.compute.types import Provider
 
 from ocs_ci.framework import config as ocsci_config
 from ocs_ci.ocs import constants, defaults
+from ocs_ci.ocs.resources import pod
 from ocs_ci.ocs.ceph import RolesContainer, Ceph, CephNode
 from ocs_ci.ocs.clients import WinNode
-from ocs_ci.ocs.exceptions import CommandFailed
+from ocs_ci.ocs.exceptions import CommandFailed, FipsNotInstalledException
 from ocs_ci.ocs.ocp import OCP
 from ocs_ci.ocs.openstack import CephVMNode
 from ocs_ci.ocs.parallel import parallel
@@ -912,3 +913,34 @@ def oc_get_all_obc_names():
     return {
         obc.get('spec').get('bucketName') for obc in all_obcs_in_namespace
     }
+
+def check_fips_enabled(fips_location="/proc/sys/crypto/fips_enabled"):
+    """
+    Checks if FIPS is activated on all pods
+
+    Args:
+        fips_location: File that refers to fips, written 1 if enabled,
+         0 otherwise
+    Returns:
+        Bool: True if all the values within the fips_enabled file is 1,
+         else False
+    Raises:
+        FIPS not installed Exception.
+        Value of fips location file should include 1
+    """
+
+
+    running_pods_object = pod.get_running_state_pods()
+    for running_pod in running_pods_object:
+        fips_value = running_pod.exec_sh_cmd_on_pod(f"cat {fips_location}")
+        if str(fips_value).strip() != "1":
+            raise FipsNotInstalledException(
+                f"""
+                    Error in the installation of FIPS on the cluster!
+                    Found value different than 1 in pod {running_pod.name}
+                    Value: \n {fips_value}
+                """
+            )
+        else:
+            log.info(f"Pod {running_pod.name} is FIPS enabled!")
+    return True
