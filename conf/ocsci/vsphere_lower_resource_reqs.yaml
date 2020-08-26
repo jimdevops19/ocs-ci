@@ -1,0 +1,9 @@
+---
+# This config will lower requirements to support OCS in lower requirements
+DEPLOYMENT:
+  allow_lower_instance_requirements: false
+ENV_DATA:
+  platform: 'vsphere'
+  worker_num_cpus: '8'
+  master_num_cpus: '8'
+  memory: '32768'
