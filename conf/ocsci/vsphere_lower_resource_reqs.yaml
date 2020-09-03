@@ -6,4 +6,5 @@ ENV_DATA:
   platform: 'vsphere'
   worker_num_cpus: '8'
   master_num_cpus: '8'
-  memory: '32768'
+  master_memory: '32768'
+  compute_memory: '32768'
