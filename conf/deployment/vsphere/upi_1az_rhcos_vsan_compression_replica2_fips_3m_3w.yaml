@@ -12,8 +12,8 @@ ENV_DATA:
   master_memory: '16384'
   compute_memory: '65536'
   fips: true
-  compression: true
-  replica2: true
+  compression: 'aggressive'
+  replica: 2
   fio_storageutilization_min_mbps: 10.0
 REPORTING:
   polarion:
